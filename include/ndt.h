@@ -6,28 +6,26 @@
 #include <thread>
 #include <sstream>
 #include <string>
-#include <ros/ros.h>
-
-#include <diagnostic_msgs/DiagnosticArray.h>
-#include <geometry_msgs/PoseWithCovarianceStamped.h>
-#include <geometry_msgs/TwistStamped.h>
-#include <geometry_msgs/PolygonStamped.h>
-#include <nav_msgs/Odometry.h>
-#include <sensor_msgs/PointCloud2.h>
-#include <sensor_msgs/Imu.h>
-#include <std_msgs/Float32.h>
-
-#include <tf2/transform_datatypes.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <map>
+#include <rclcpp/rclcpp.hpp>
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
+#include <diagnostic_msgs/msg/diagnostic_status.hpp>
+#include <diagnostic_msgs/msg/key_value.hpp>
+#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
+#include <geometry_msgs/msg/polygon_stamped.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/msg/imu.hpp>
+#include <std_msgs/msg/float32.hpp>
 #include <tf2_ros/transform_broadcaster.h>
-#include <tf2_eigen/tf2_eigen.h>
 #include <tf2_ros/transform_listener.h>
-
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2_eigen/tf2_eigen.hpp>
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/registration/ndt.h>
-#include <pcl_ros/point_cloud.h>
-#include <pcl_ros/transforms.h>
+#include <pcl/common/transforms.h>
 
 struct Pose {
     double x;
@@ -38,76 +36,59 @@ struct Pose {
     double yaw;
 };
 
-class NdtLocalizer{
+class NdtLocalizer : public rclcpp::Node {
 public:
-
-    NdtLocalizer(ros::NodeHandle &nh, ros::NodeHandle &private_nh);
+    NdtLocalizer();
     ~NdtLocalizer();
 
 private:
-    ros::NodeHandle nh_, private_nh_;
+    // Publishers
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr sensor_aligned_pose_pub_;
+    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr ndt_pose_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr exe_time_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr transform_probability_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr iteration_num_pub_;
+    rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::PolygonStamped>::SharedPtr poly_pub_;
+    // Subscribers
+    rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr initial_pose_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr map_points_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sensor_points_sub_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
 
-    ros::Subscriber initial_pose_sub_;
-    ros::Subscriber map_points_sub_;
-    ros::Subscriber sensor_points_sub_;
-    ros::Subscriber odom_sub_;
-
-    ros::Publisher sensor_aligned_pose_pub_;
-    ros::Publisher ndt_pose_pub_;
-    ros::Publisher exe_time_pub_;
-    ros::Publisher transform_probability_pub_;
-    ros::Publisher iteration_num_pub_;
-    ros::Publisher diagnostics_pub_;
-    ros::Publisher poly_pub_;
-
-    pcl::NormalDistributionsTransform<pcl::PointXYZ, pcl::PointXYZ> *ndt_;
-
+    // Member variables
+    std::map<std::string, std::string> key_value_stdmap_;
+    geometry_msgs::msg::PolygonStamped poly;
+    std::string path_file;
+    std::string map_frame_;
+    std::string odom_frame_;
+    std::string base_frame_;
+    double converged_param_transform_probability_;
+    std::mutex ndt_map_mtx_;
+    bool init_pose = false;
+    bool is_ndt_published = false;
+    Eigen::Matrix4f pre_trans, odom_trans, pre_odom_trans, map_to_odom_matrix, delta_trans, pre_corr_trans, base_to_sensor_matrix_, initial_pose_matrix;
+    geometry_msgs::msg::PoseWithCovarianceStamped initial_pose_cov_msg_;
+    pcl::NormalDistributionsTransform<pcl::PointXYZ, pcl::PointXYZ>* ndt_;
     tf2_ros::Buffer tf2_buffer_;
     tf2_ros::TransformListener tf2_listener_;
     tf2_ros::TransformBroadcaster tf2_broadcaster_;
 
-    Eigen::Matrix4f base_to_sensor_matrix_;
-    Eigen::Matrix4f odom_trans, pre_odom_trans;
-    Eigen::Matrix4f initial_pose_matrix, map_to_odom_matrix;
-    Eigen::Matrix4f pre_trans, delta_trans, pre_corr_trans;
-    bool init_pose = false;
-    bool is_ndt_published = false;
-    std::string path_file;
-    geometry_msgs::PolygonStamped poly;
-
-    std::string base_frame_;
-    std::string map_frame_;
-    std::string odom_frame_;
-
-    // init guess for ndt
-    geometry_msgs::PoseWithCovarianceStamped initial_pose_cov_msg_;
-
-    std::mutex ndt_map_mtx_;
-
-    double converged_param_transform_probability_;
-    std::thread diagnostic_thread_;
-    std::map<std::string, std::string> key_value_stdmap_;
-
-    // function
-    void init_params();
-    void timer_diagnostic();
-
+    // Updated function signatures
+    void callback_init_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr initial_pose_msg_ptr);
+    void callback_pointsmap(const sensor_msgs::msg::PointCloud2::SharedPtr map_points_msg_ptr);
+    void callback_odom(const nav_msgs::msg::Odometry::SharedPtr odom_msg);
+    void callback_pointcloud(const sensor_msgs::msg::PointCloud2::SharedPtr sensor_points_sensorTF_msg_ptr);
     bool get_transform(const std::string & target_frame, const std::string & source_frame,
-                       const geometry_msgs::TransformStamped::Ptr & transform_stamped_ptr,
-                       const ros::Time & time_stamp);
-    bool get_transform(const std::string & target_frame, 
-                       const std::string & source_frame,
-                       const geometry_msgs::TransformStamped::Ptr & transform_stamped_ptr);
+                      const geometry_msgs::msg::TransformStamped::SharedPtr transform_stamped,
+                      const rclcpp::Time & time_stamp);
+    bool get_transform(const std::string & target_frame, const std::string & source_frame,
+                      const geometry_msgs::msg::TransformStamped::SharedPtr transform_stamped);
     void publish_tf(const std::string & frame_id, const std::string & child_frame_id,
-                    const geometry_msgs::PoseStamped & pose_msg);
-
-    void callback_pointsmap(const sensor_msgs::PointCloud2::ConstPtr & pointcloud2_msg_ptr);
-    void callback_init_pose(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr & pose_conv_msg_ptr);
-    void callback_pointcloud(const sensor_msgs::PointCloud2::ConstPtr & pointcloud2_msg_ptr);
-    void callback_odom(const nav_msgs::Odometry::ConstPtr & odom_msg_ptr);
-
-    void getXYZRPYfromMat(const Eigen::Matrix4f mat, Pose & p);
-    double getNearestHeight(const geometry_msgs::Pose p);
+                   const geometry_msgs::msg::PoseStamped & pose_msg);
     bool loadPath(std::string path);
-
-};// NdtLocalizer Core
+    double getNearestHeight(const geometry_msgs::msg::Pose p);
+    void getXYZRPYfromMat(const Eigen::Matrix4f mat, Pose &p);
+    void timer_diagnostic();
+    void init_params();
+}; // <-- Add this closing brace for the class
