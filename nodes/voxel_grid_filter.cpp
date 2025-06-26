@@ -30,7 +30,7 @@ public:
         scan_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             points_topic_, 10, std::bind(&VoxelGridFilterNode::scan_callback, this, std::placeholders::_1));
 
-        RCLCPP_INFO(this->get_logger(), "Voxel leaf size is: %f", voxel_leaf_size_);
+        // RCLCPP_INFO(this->get_logger(), "Voxel leaf size is: %f", voxel_leaf_size_);
     }
 
 private:
@@ -57,7 +57,7 @@ private:
             pcl::PointIndices::Ptr front_index(new pcl::PointIndices());
             pcl::ExtractIndices<pcl::PointXYZ> extract;
 
-            RCLCPP_INFO(this->get_logger(), "before filtering %zu", filtered_scan_ptr->size());
+            // RCLCPP_INFO(this->get_logger(), "before filtering %zu", filtered_scan_ptr->size());
 
             for (size_t i = 0; i < filtered_scan_ptr->size(); i++) {
                 auto point = filtered_scan_ptr->points[i];
@@ -76,7 +76,7 @@ private:
             extract.setNegative(true);
             //extract.filter(*filtered_scan_ptr); // Uncomment if you want to actually filter
 
-            RCLCPP_INFO(this->get_logger(), "after filtering %zu", filtered_scan_ptr->size());
+            // RCLCPP_INFO(this->get_logger(), "after filtering %zu", filtered_scan_ptr->size());
             pcl::toROSMsg(*filtered_scan_ptr, filtered_msg);
         } else {
             pcl::toROSMsg(*scan_ptr, filtered_msg);

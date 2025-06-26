@@ -39,4 +39,22 @@ target_link_libraries(ndt_localizer_node ${PCL_LIBRARIES})
 install(TARGETS voxel_grid_filter map_loader ndt_localizer_node
   DESTINATION lib/${PROJECT_NAME})
 
+install(DIRECTORY launch/
+  DESTINATION share/${PROJECT_NAME}/launch
+  FILES_MATCHING PATTERN "*.py" PATTERN "*.launch"
+)
+
+install(DIRECTORY urdf/
+  DESTINATION share/${PROJECT_NAME}/urdf
+  FILES_MATCHING PATTERN "*.urdf" PATTERN "*.dae" PATTERN "*.jpg"
+)
+install(DIRECTORY cfgs/
+  DESTINATION share/${PROJECT_NAME}/cfgs
+  FILES_MATCHING PATTERN "*.yaml"
+)
+
+install(DIRECTORY map/
+  DESTINATION share/${PROJECT_NAME}/map
+)
+
 ament_package()
