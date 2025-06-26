@@ -150,6 +150,12 @@ void NdtLocalizer::callback_init_pose(const geometry_msgs::msg::PoseWithCovarian
 
   ndt_pose_pub_->publish(init_odom_msg);
 
+  // Reset all transformation matrices when initial pose is set
+  pre_trans.setIdentity();
+  map_to_odom_matrix.setIdentity();
+  pre_corr_trans.setIdentity();
+  delta_trans.setIdentity();
+  
   // if click the initpose again, re init！
   init_pose = false;
 }
@@ -191,14 +197,13 @@ void NdtLocalizer::callback_pointsmap(const sensor_msgs::msg::PointCloud2::Share
 
 void NdtLocalizer::callback_odom(const nav_msgs::msg::Odometry::SharedPtr odom_msg)
 {
-  if(is_ndt_published) {
-    geometry_msgs::msg::Pose odom_pose_msg = odom_msg->pose.pose;
+  // Always update odom_trans to get the latest odometry information
+  geometry_msgs::msg::Pose odom_pose_msg = odom_msg->pose.pose;
 
-    Eigen::Vector3f t(odom_pose_msg.position.x, odom_pose_msg.position.y, odom_pose_msg.position.z);
-    odom_trans.block<3, 1>(0, 3) = t;
-    Eigen::Quaternionf q(odom_pose_msg.orientation.w, odom_pose_msg.orientation.x, odom_pose_msg.orientation.y, odom_pose_msg.orientation.z);
-    odom_trans.block<3, 3>(0, 0) = q.toRotationMatrix();
-  }
+  Eigen::Vector3f t(odom_pose_msg.position.x, odom_pose_msg.position.y, odom_pose_msg.position.z);
+  odom_trans.block<3, 1>(0, 3) = t;
+  Eigen::Quaternionf q(odom_pose_msg.orientation.w, odom_pose_msg.orientation.x, odom_pose_msg.orientation.y, odom_pose_msg.orientation.z);
+  odom_trans.block<3, 3>(0, 0) = q.toRotationMatrix();
 }
 
 void NdtLocalizer::callback_pointcloud(const sensor_msgs::msg::PointCloud2::SharedPtr sensor_points_sensorTF_msg_ptr)
@@ -238,9 +243,15 @@ void NdtLocalizer::callback_pointcloud(const sensor_msgs::msg::PointCloud2::Shar
   // set input point cloud
   ndt_->setInputSource(sensor_points_baselinkTF_ptr);
 
-  if (ndt_->getInputTarget() == nullptr || !is_ndt_published)
+  if (ndt_->getInputTarget() == nullptr || !init_pose)
   {
-    RCLCPP_WARN_STREAM_THROTTLE(this->get_logger(), *this->get_clock(), 1.0, "No MAP!");
+    RCLCPP_WARN_STREAM_THROTTLE(this->get_logger(), *this->get_clock(), 1.0, "No MAP or waiting for initial pose!");
+    
+    if (initial_pose_cov_msg_.header.frame_id.empty()) {
+      // No initial pose set yet, skip processing
+      return;
+    }
+    
     Eigen::Affine3d initial_pose_affine;
     tf2::fromMsg(initial_pose_cov_msg_.pose.pose, initial_pose_affine);
     initial_pose_matrix = initial_pose_affine.matrix().cast<float>();
@@ -252,11 +263,10 @@ void NdtLocalizer::callback_pointcloud(const sensor_msgs::msg::PointCloud2::Shar
     // for the first time, we don't know the pre_trans, so just use the init_trans,
     // which means, the delta trans for the second time is 0
     pre_trans = initial_pose_matrix;
-    odom_trans = initial_pose_matrix;
-    pre_odom_trans = odom_trans;
-    map_to_odom_matrix.setIdentity(); // // local odom mode
+    pre_odom_trans = odom_to_base_matrix;
+    map_to_odom_matrix = initial_pose_matrix * odom_to_base_matrix.inverse(); // Correct initialization for local odom mode
 
-    std::cout << "not initialised!" << std::endl;
+    std::cout << "Initialized with manual pose!" << std::endl;
 
     init_pose = true;
   }
@@ -264,8 +274,8 @@ void NdtLocalizer::callback_pointcloud(const sensor_msgs::msg::PointCloud2::Shar
   {
     // use predicted pose as init guess
     // initial_pose_matrix = pre_trans * delta_trans;  // linear prediction mode
-    //initial_pose_matrix = map_to_odom_matrix * odom_trans;  // local odom mode
-    initial_pose_matrix = odom_trans; // global odom mode
+    initial_pose_matrix = map_to_odom_matrix * odom_to_base_matrix;  // local odom mode - CORRECTED
+    // initial_pose_matrix = odom_trans; // global odom mode - REMOVED
   }
 
   pcl::PointCloud<pcl::PointXYZ>::Ptr output_cloud(new pcl::PointCloud<pcl::PointXYZ>);
@@ -363,7 +373,7 @@ void NdtLocalizer::callback_pointcloud(const sensor_msgs::msg::PointCloud2::Shar
   const geometry_msgs::msg::Pose result_pose_msg2 = tf2::toMsg(map_to_odom_affine);
 
   // publish tf (map frame to odom frame)
-  bool is_publish_tf = false;
+  bool is_publish_tf = true;  // Enable TF publishing
 
   if(is_publish_tf)
   {
